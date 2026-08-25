@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>5037 STRC → BTC 領先指標研究</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --line:#30363d; --txt:#e6edf3; --sub:#8b949e;
+          --btc:#f7931a; --strc:#58a6ff; --red:#f85149; --yellow:#d29922; --green:#3fb950; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:"Segoe UI","Microsoft JhengHei",sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 4px; }
+  .meta { color:var(--sub); font-size:13px; margin-bottom:20px; }
+  .meta b { color:var(--txt); }
+  .verdict { background:var(--card); border:1px solid var(--line); border-radius:12px;
+             padding:24px; margin-bottom:24px; display:flex; gap:20px; align-items:center; }
+  .light { width:64px; height:64px; border-radius:50%; flex-shrink:0;
+           box-shadow:0 0 24px currentColor; }
+  .light.red{color:var(--red);background:var(--red);}
+  .light.yellow{color:var(--yellow);background:var(--yellow);}
+  .light.green{color:var(--green);background:var(--green);}
+  .verdict h2 { margin:0 0 6px; font-size:18px; }
+  .verdict p { margin:0; color:var(--sub); line-height:1.6; }
+  .conf { display:inline-block; margin-top:8px; font-size:12px; color:var(--yellow);
+          border:1px solid var(--yellow); border-radius:6px; padding:2px 8px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .panel.full { grid-column:1 / -1; }
+  .panel h3 { margin:0 0 2px; font-size:15px; }
+  .panel .hint { color:var(--sub); font-size:12px; margin:0 0 12px; line-height:1.5; }
+  .panel .stat { color:var(--sub); font-size:12px; margin-top:10px; }
+  .panel .stat b { color:var(--txt); }
+  canvas { width:100% !important; }
+  .btn { background:#21262d; color:var(--txt); border:1px solid var(--line);
+         border-radius:6px; padding:6px 14px; cursor:pointer; font-size:13px; }
+  .btn:hover { background:#30363d; }
+  .disclaimer { margin-top:28px; padding:14px 16px; border:1px dashed var(--line);
+                border-radius:8px; color:var(--sub); font-size:12px; line-height:1.7; }
+  .loading { text-align:center; padding:80px 0; color:var(--sub); }
+  @media (max-width:720px){ .grid{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+    <div>
+      <h1>STRC → BTC 領先指標研究</h1>
+      <div class="meta" id="meta">載入中…</div>
+    </div>
+    <button class="btn" id="refresh">重新抓資料</button>
+  </div>
+
+  <div id="content"><div class="loading">正在抓取 STRC 與 BTC 資料、計算指標…（首次約需 10~30 秒）</div></div>
+
+  <div class="disclaimer">
+    ⚠️ <b>探索性研究，非投資建議。</b>
+    STRC 於 2025 年 7 月才上市，樣本僅約一年，統計結論強度有限；STRC 被公司以月配息機制
+    刻意穩定在 $100 面值附近，理論上 BTC 反而較可能領先 STRC。本工具用「錨點對齊」
+    （STRC 收盤 16:00 ET / 開盤 09:30 ET 對應同時點 BTC）避免假訊號，但要下穩健結論至少需
+    2~3 年資料。所有數字僅供參考。
+  </div>
+</div>
+
+<script>
+const C = { btc:'#f7931a', strc:'#58a6ff', red:'#f85149', yellow:'#d29922',
+            green:'#3fb950', grid:'#30363d', sub:'#8b949e' };
+Chart.defaults.color = C.sub;
+Chart.defaults.borderColor = C.grid;
+Chart.defaults.font.family = '"Segoe UI","Microsoft JhengHei",sans-serif';
+let charts = [];
+
+function fmt(v, d=2){ return v==null ? '—' : Number(v).toFixed(d); }
+
+async function load(refresh){
+  document.getElementById('content').innerHTML =
+    '<div class="loading">計算中…</div>';
+  charts.forEach(c=>c.destroy()); charts=[];
+  let r;
+  try {
+    r = await (await fetch('/api/analysis' + (refresh?'?refresh=1':''))).json();
+  } catch(e){ r = {error:String(e)}; }
+  if (r.error){
+    const box = document.getElementById('content');
+    box.innerHTML = '<div class="loading"></div>';
+    box.firstChild.textContent = '抓資料失敗：' + r.error;
+    return;
+  }
+  render(r);
+}
+
+function render(r){
+  const m = r.meta, v = r.conclusion;
+  document.getElementById('meta').innerHTML =
+    `樣本 <b>${m.start_date} ~ ${m.end_date}</b>｜對齊交易日 <b>${m.aligned_points}</b> 天`
+    + `｜STRC 最新收盤 <b>$${fmt(m.latest_strc_close)}</b>（面值 $${m.par}）`;
+
+  const lightWord = {red:'無證據／落後', yellow:'微弱訊號', green:'有領先'}[v.light] || '—';
+  document.getElementById('content').innerHTML = `
+    <div class="verdict">
+      <div class="light ${v.light}"></div>
+      <div>
+        <h2>STRC 是否領先 BTC？ — ${lightWord}</h2>
+        <p>${v.text}</p>
+        <span class="conf">信心等級：低（樣本僅約一年）</span>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="panel full">
+        <h3>① 折溢價 vs BTC 價格</h3>
+        <p class="hint">藍線＝STRC 對 $100 面值的折溢價(%)，橘線＝BTC。看折價擴大時 BTC 是否隨後才動。</p>
+        <canvas id="c_prem" height="120"></canvas>
+      </div>
+      <div class="panel full">
+        <h3>② STRC 成交量異常</h3>
+        <p class="hint">柱狀＝每日量（紅色＝|z|≥2 的異常放量日），橘線＝BTC。異常放量是否聚集在 BTC 轉折前。</p>
+        <canvas id="c_vol" height="120"></canvas>
+      </div>
+      <div class="panel">
+        <h3>③ Lead-Lag 互相關 (CCF)</h3>
+        <p class="hint">x 軸正 lag＝<b style="color:#3fb950">STRC 領先</b>、負 lag＝<b style="color:#f85149">BTC 領先</b>。超出虛線(信賴帶)才算顯著。</p>
+        <canvas id="c_ccf" height="200"></canvas>
+      </div>
+      <div class="panel">
+        <h3>④ 隔夜領先迴歸</h3>
+        <p class="hint">x＝STRC 收盤折價(%)，y＝該晚 BTC 隔夜報酬(%)。有斜率且顯著＝折價對隔夜 BTC 有預測力。</p>
+        <canvas id="c_reg" height="200"></canvas>
+        <div class="stat">n=<b>${r.overnight_reg.n}</b>｜斜率 <b>${fmt(r.overnight_reg.slope,4)}</b>
+          ｜R² <b>${fmt(r.overnight_reg.r2,3)}</b>｜p <b>${fmt(r.overnight_reg.p,3)}</b>
+          ｜95%CI [${fmt(r.overnight_reg.ci_low,4)}, ${fmt(r.overnight_reg.ci_high,4)}]</div>
+      </div>
+      <div class="panel full">
+        <h3>⑤ 健全性檢查：BTC 前夜報酬 → STRC 開盤跳空</h3>
+        <p class="hint">這是已知的「落後」關係，<b>應該顯著正相關</b>。若這裡不顯著，代表時間對齊有問題、上面的領先結論都不可信。</p>
+        <canvas id="c_sanity" height="90"></canvas>
+        <div class="stat">n=<b>${r.sanity_reg.n}</b>｜斜率 <b>${fmt(r.sanity_reg.slope,4)}</b>
+          ｜R² <b>${fmt(r.sanity_reg.r2,3)}</b>｜p <b>${fmt(r.sanity_reg.p,3)}</b>
+          ｜${(r.sanity_reg.p!=null && r.sanity_reg.p<0.05)
+              ? '<b style="color:#3fb950">✓ 顯著，對齊正常</b>'
+              : '<b style="color:#f85149">✗ 不顯著，對齊存疑</b>'}</div>
+      </div>
+    </div>`;
+
+  drawPremium(r); drawVolume(r); drawCCF(r); drawReg(r); drawSanity(r);
+}
+
+function lineXY(arr, key){ return arr.map(d=>({x:d.date, y:d[key]})); }
+
+function drawPremium(r){
+  const a = r.premium_series;
+  charts.push(new Chart(document.getElementById('c_prem'), {
+    data:{ labels:a.map(d=>d.date),
+      datasets:[
+        {type:'line', label:'STRC 折溢價 %', yAxisID:'y', data:a.map(d=>d.premium_pct),
+         borderColor:C.strc, borderWidth:1.5, pointRadius:0, tension:.2},
+        {type:'line', label:'BTC', yAxisID:'y1', data:a.map(d=>d.btc_close),
+         borderColor:C.btc, borderWidth:1.5, pointRadius:0, tension:.2},
+      ]},
+    options:{ responsive:true, interaction:{mode:'index',intersect:false},
+      scales:{ x:{ticks:{maxTicksLimit:8}}, y:{position:'left',title:{display:true,text:'折溢價%'}},
+        y1:{position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'BTC'}} } }
+  }));
+}
+
+function drawVolume(r){
+  const a = r.volume_series;
+  charts.push(new Chart(document.getElementById('c_vol'), {
+    data:{ labels:a.map(d=>d.date),
+      datasets:[
+        {type:'bar', label:'STRC 量', yAxisID:'y', data:a.map(d=>d.volume),
+         backgroundColor:a.map(d=>d.anomaly?C.red:'#30414d')},
+        {type:'line', label:'BTC', yAxisID:'y1', data:a.map(d=>d.btc_close),
+         borderColor:C.btc, borderWidth:1.5, pointRadius:0, tension:.2},
+      ]},
+    options:{ responsive:true, interaction:{mode:'index',intersect:false},
+      scales:{ x:{ticks:{maxTicksLimit:8}}, y:{position:'left',title:{display:true,text:'量'}},
+        y1:{position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'BTC'}} } }
+  }));
+}
+
+function drawCCF(r){
+  const lags = r.ccf.lags, vals = r.ccf.values, band = r.ccf.conf_band;
+  charts.push(new Chart(document.getElementById('c_ccf'), {
+    data:{ labels:lags,
+      datasets:[
+        {type:'bar', label:'相關係數', data:vals,
+         backgroundColor:lags.map((l,i)=>{
+           const v=vals[i]; if(v==null) return '#30414d';
+           if(Math.abs(v)<=band) return '#30414d';
+           return l>0 ? C.green : C.red; })},
+        {type:'line', label:'+信賴帶', data:lags.map(()=>band),
+         borderColor:C.sub, borderDash:[5,4], borderWidth:1, pointRadius:0},
+        {type:'line', label:'-信賴帶', data:lags.map(()=>-band),
+         borderColor:C.sub, borderDash:[5,4], borderWidth:1, pointRadius:0},
+      ]},
+    options:{ responsive:true, plugins:{legend:{display:false}},
+      scales:{ x:{title:{display:true,text:'lag（正=STRC領先 / 負=BTC領先）'}},
+        y:{title:{display:true,text:'相關'}} } }
+  }));
+}
+
+function scatterChart(canvasId, reg, xlabel, ylabel, color){
+  const pts = reg.points || [];
+  const ds = [{type:'scatter', label:'觀測', data:pts, backgroundColor:color, pointRadius:3}];
+  if (reg.slope!=null && pts.length){
+    const xs = pts.map(p=>p.x); const xmin=Math.min(...xs), xmax=Math.max(...xs);
+    const line = [{x:xmin, y:reg.intercept+reg.slope*xmin},
+                  {x:xmax, y:reg.intercept+reg.slope*xmax}];
+    ds.push({type:'line', label:'迴歸線', data:line, borderColor:'#e6edf3',
+             borderWidth:1.5, pointRadius:0});
+  }
+  charts.push(new Chart(document.getElementById(canvasId), {
+    data:{datasets:ds},
+    options:{ responsive:true, plugins:{legend:{display:false}},
+      scales:{ x:{type:'linear', title:{display:true,text:xlabel}},
+        y:{title:{display:true,text:ylabel}} } }
+  }));
+}
+
+function drawReg(r){ scatterChart('c_reg', r.overnight_reg,
+  'STRC 收盤折價 %', 'BTC 隔夜報酬 %', C.strc); }
+function drawSanity(r){ scatterChart('c_sanity', r.sanity_reg,
+  'BTC 前夜報酬 %', 'STRC 開盤跳空 %', C.yellow); }
+
+document.getElementById('refresh').onclick = ()=>load(true);
+load(false);
+</script>
+</body>
+</html>
